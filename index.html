@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Afinador ECJ</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Afinador ECJ 🐉</h1>
+    <p>Afine seu instrumento direto no navegador.</p>
+  </header>
+
+  <main>
+    <section aria-labelledby="instrument-label">
+      <h2 id="instrument-label">Escolha o instrumento</h2>
+      <div role="group" aria-labelledby="instrument-label">
+        <button id="btn-violao" aria-pressed="false">Violão</button>
+        <button id="btn-ukulele" aria-pressed="false">Ukulele</button>
+      </div>
+    </section>
+
+    <section id="tuner-section" aria-labelledby="tuner-title" hidden>
+      <h2 id="tuner-title"></h2>
+
+      <div id="strings-list" role="list" aria-label="Cordas do instrumento"></div>
+
+      <button id="btn-start" aria-label="Iniciar afinação">Iniciar afinação</button>
+      <button id="btn-stop" hidden aria-label="Parar afinação">Parar</button>
+
+      <!-- Região live: atualizada em tempo real pelo screen reader -->
+      <div
+        id="status"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label="Status da afinação"
+      >
+        Pressione "Iniciar afinação" e toque uma corda.
+      </div>
+
+      <div id="cents-display" aria-hidden="true">
+        <!-- Indicador visual de cents — decorativo, screen reader ignora -->
+        <span id="cents-bar-container">
+          <span id="cents-bar"></span>
+        </span>
+        <span id="cents-value"></span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Eu Concego Jogar — Inclusão Digital</p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
