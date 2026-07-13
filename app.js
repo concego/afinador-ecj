@@ -7,14 +7,13 @@ import { INSTRUMENT as VIOLAO,  matchString as matchViolao,  statusText as statu
 import { INSTRUMENT as UKULELE, matchString as matchUkulele, statusText as statusUkulele } from './instruments/ukulele.js';
 
 // ─── Modos de afinação ───────────────────────────────────────────────────────
-const MODE_AUTO     = 'auto';      // detecta a corda automaticamente
-const MODE_STRING   = 'string';    // usuário trava numa corda
+const MODE_STRING    = 'string';    // usuário trava numa corda específica
 const MODE_CHROMATIC = 'chromatic'; // detecta qualquer nota
 
 // ─── Estado ──────────────────────────────────────────────────────────────────
-let currentInstrument = null;  // chave do instrumento selecionado
-let currentMode       = MODE_AUTO;
-let selectedString    = null;  // índice da corda travada (modo string)
+let currentInstrument = null;
+let currentMode       = MODE_STRING;
+let selectedString    = null;
 let audioContext      = null;
 let analyser          = null;
 let mediaStream       = null;
@@ -22,8 +21,8 @@ let animationId       = null;
 let buffer            = null;
 let lastStatus        = '';
 let tunedFrames       = 0;
-const TUNED_CONFIRM   = 10;    // frames consecutivos para confirmar afinação
-const BUFFER_SIZE     = 4096;  // buffer maior → melhor detecção de graves
+const TUNED_CONFIRM   = 10;
+const BUFFER_SIZE     = 4096; // buffer maior → melhor detecção de graves
 
 // ─── Instrumentos registrados ─────────────────────────────────────────────────
 const instruments = {
@@ -32,17 +31,17 @@ const instruments = {
 };
 
 // ─── Referências DOM ──────────────────────────────────────────────────────────
-const tunerSection    = document.getElementById('tuner-section');
-const tunerTitle      = document.getElementById('tuner-title');
-const stringsList     = document.getElementById('strings-list');
+const tunerSection     = document.getElementById('tuner-section');
+const tunerTitle       = document.getElementById('tuner-title');
+const stringsList      = document.getElementById('strings-list');
 const stringSelectorEl = document.getElementById('string-selector');
-const stringButtonsEl = document.getElementById('string-buttons');
-const btnPlayRef      = document.getElementById('btn-play-reference');
-const btnStart        = document.getElementById('btn-start');
-const btnStop         = document.getElementById('btn-stop');
-const statusEl        = document.getElementById('status');
-const centsNeedle     = document.getElementById('cents-needle');
-const centsValue      = document.getElementById('cents-value');
+const stringButtonsEl  = document.getElementById('string-buttons');
+const btnPlayRef       = document.getElementById('btn-play-reference');
+const btnStart         = document.getElementById('btn-start');
+const btnStop          = document.getElementById('btn-stop');
+const statusEl         = document.getElementById('status');
+const centsNeedle      = document.getElementById('cents-needle');
+const centsValue       = document.getElementById('cents-value');
 
 // ─── Acordeão ────────────────────────────────────────────────────────────────
 document.querySelectorAll('.accordion-toggle').forEach(btn => {
@@ -71,29 +70,13 @@ function selectInstrument(key) {
   tunerTitle.textContent = inst.data.name;
   tunerSection.hidden = false;
 
-  renderStringList(inst);
   renderStringButtons(inst);
   setMode(currentMode);
   setStatus('Pressione "Iniciar afinação" e toque uma corda.', '');
   stopTuning();
 }
 
-// ─── Renderização ─────────────────────────────────────────────────────────────
-function renderStringList(inst) {
-  stringsList.innerHTML = '';
-  inst.data.strings.forEach(string => {
-    const div = document.createElement('div');
-    div.setAttribute('role', 'listitem');
-    div.className = 'string-item';
-    div.innerHTML = `
-      <span>${string.label}</span>
-      <span class="note">${string.note}</span>
-      <span class="freq">${string.freq.toFixed(2)} Hz</span>
-    `;
-    stringsList.appendChild(div);
-  });
-}
-
+// ─── Renderização dos botões de corda ─────────────────────────────────────────
 function renderStringButtons(inst) {
   stringButtonsEl.innerHTML = '';
   inst.data.strings.forEach((string, i) => {
@@ -110,20 +93,18 @@ function renderStringButtons(inst) {
 }
 
 // ─── Seletor de modo ──────────────────────────────────────────────────────────
-document.getElementById('btn-mode-auto').addEventListener('click',      () => setMode(MODE_AUTO));
 document.getElementById('btn-mode-string').addEventListener('click',    () => setMode(MODE_STRING));
 document.getElementById('btn-mode-chromatic').addEventListener('click', () => setMode(MODE_CHROMATIC));
 
 function setMode(mode) {
   currentMode = mode;
 
-  document.getElementById('btn-mode-auto').setAttribute('aria-pressed',      mode === MODE_AUTO      ? 'true' : 'false');
   document.getElementById('btn-mode-string').setAttribute('aria-pressed',    mode === MODE_STRING    ? 'true' : 'false');
   document.getElementById('btn-mode-chromatic').setAttribute('aria-pressed', mode === MODE_CHROMATIC ? 'true' : 'false');
 
-  // Visibilidade dos painéis
+  // No modo cromático não precisa selecionar instrumento/corda
   stringSelectorEl.hidden = mode !== MODE_STRING;
-  stringsList.hidden      = mode === MODE_STRING || mode === MODE_CHROMATIC;
+  stringsList.hidden      = true; // lista informativa removida — foco nos botões de corda
 }
 
 // ─── Referência sonora (modo corda a corda) ───────────────────────────────────
@@ -134,8 +115,8 @@ btnPlayRef.addEventListener('click', () => {
 });
 
 function playReferenceNote(freq) {
-  const ctx = new AudioContext();
-  const osc = ctx.createOscillator();
+  const ctx  = new AudioContext();
+  const osc  = ctx.createOscillator();
   const gain = ctx.createGain();
 
   osc.type = 'sine';
@@ -156,12 +137,16 @@ btnStop.addEventListener('click',  stopTuning);
 
 async function startTuning() {
   if (!currentInstrument) return;
+  if (currentMode === MODE_STRING && selectedString === null) {
+    setStatus('Selecione uma corda antes de iniciar.', '');
+    return;
+  }
 
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    mediaStream  = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     audioContext = new AudioContext();
-    analyser = audioContext.createAnalyser();
-    analyser.fftSize = BUFFER_SIZE; // buffer maior para graves
+    analyser     = audioContext.createAnalyser();
+    analyser.fftSize = BUFFER_SIZE;
     buffer = new Float32Array(analyser.fftSize);
 
     const source = audioContext.createMediaStreamSource(mediaStream);
@@ -169,8 +154,8 @@ async function startTuning() {
 
     btnStart.hidden = true;
     btnStop.hidden  = false;
-    lastStatus = '';
-    tunedFrames = 0;
+    lastStatus      = '';
+    tunedFrames     = 0;
     setStatus('Ouvindo... toque uma corda.', '');
 
     loop();
@@ -187,8 +172,8 @@ function stopTuning() {
   animationId = null;
   mediaStream = null;
   audioContext = null;
-  analyser = null;
-  buffer = null;
+  analyser    = null;
+  buffer      = null;
   tunedFrames = 0;
 
   btnStart.hidden = false;
@@ -206,7 +191,6 @@ function loop() {
     let text, cents;
 
     if (currentMode === MODE_CHROMATIC) {
-      // Modo cromático: qualquer nota
       const { note, octave, cents: c } = freqToNote(freq);
       cents = c;
       if (Math.abs(cents) <= 5) {
@@ -217,10 +201,9 @@ function loop() {
         text = `${note}${octave} — aperte a corda.`;
       }
 
-    } else if (currentMode === MODE_STRING && selectedString !== null) {
-      // Modo corda a corda: trava na corda selecionada
-      const inst = instruments[currentInstrument];
-      const target = inst.data.strings[selectedString];
+    } else {
+      // Modo corda a corda
+      const target = instruments[currentInstrument].data.strings[selectedString];
       cents = Math.round(1200 * Math.log2(freq / target.freq));
       if (Math.abs(cents) <= 5) {
         text = `${target.label}: afinada.`;
@@ -229,16 +212,8 @@ function loop() {
       } else {
         text = `${target.label}: aperte a corda.`;
       }
-
-    } else {
-      // Modo automático: detecta a corda mais próxima
-      const inst  = instruments[currentInstrument];
-      const match = inst.match(freq);
-      text  = inst.text(match);
-      cents = match ? match.cents : 0;
     }
 
-    // Atualiza aria-live só quando o texto muda
     if (text !== lastStatus) {
       setStatus(text, getCentsClass(cents));
       lastStatus = text;
@@ -248,12 +223,9 @@ function loop() {
 
     updateCentsBar(cents);
 
-    // Confirma afinação após N frames consecutivos
     if (Math.abs(cents) <= 5) {
       tunedFrames++;
-      if (tunedFrames === TUNED_CONFIRM) {
-        playConfirmBeep();
-      }
+      if (tunedFrames === TUNED_CONFIRM) playConfirmBeep();
     } else {
       tunedFrames = 0;
     }
@@ -262,7 +234,7 @@ function loop() {
   animationId = requestAnimationFrame(loop);
 }
 
-// ─── Importa freqToNote (para modo cromático) ─────────────────────────────────
+// ─── freqToNote (modo cromático) ─────────────────────────────────────────────
 function freqToNote(freq) {
   const noteNames = ['Dó','Dó#','Ré','Ré#','Mi','Fá','Fá#','Sol','Sol#','Lá','Lá#','Si'];
   const semitones = 12 * Math.log2(freq / 440);
@@ -299,7 +271,7 @@ function getCentsClass(cents) {
 
 function setStatus(text, cssClass) {
   statusEl.textContent = text;
-  statusEl.className = cssClass;
+  statusEl.className   = cssClass;
 }
 
 function updateCentsBar(cents) {
