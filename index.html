@@ -13,40 +13,74 @@
   </header>
 
   <main>
+    <!-- Seleção de instrumento via acordeão por categoria -->
     <section aria-labelledby="instrument-label">
       <h2 id="instrument-label">Escolha o instrumento</h2>
-      <div role="group" aria-labelledby="instrument-label">
-        <button id="btn-violao" aria-pressed="false">Violão</button>
-        <button id="btn-ukulele" aria-pressed="false">Ukulele</button>
+
+      <div class="accordion">
+        <button class="accordion-toggle" aria-expanded="false" aria-controls="group-cordas">
+          Cordas <span aria-hidden="true">▾</span>
+        </button>
+        <div id="group-cordas" class="accordion-panel" hidden>
+          <div class="cards-grid" role="list">
+            <button class="instrument-card" role="listitem" data-instrument="violao" aria-pressed="false">
+              <span class="card-name">Violão</span>
+              <span class="card-tuning">E A D G B e</span>
+            </button>
+            <button class="instrument-card" role="listitem" data-instrument="ukulele" aria-pressed="false">
+              <span class="card-name">Ukulele</span>
+              <span class="card-tuning">G C E A</span>
+            </button>
+          </div>
+        </div>
       </div>
     </section>
 
+    <!-- Painel de afinação (aparece após escolher instrumento) -->
     <section id="tuner-section" aria-labelledby="tuner-title" hidden>
       <h2 id="tuner-title"></h2>
 
+      <!-- Seletor de modo -->
+      <div class="mode-selector" role="group" aria-label="Modo de afinação">
+        <button id="btn-mode-auto"     aria-pressed="true">Automático</button>
+        <button id="btn-mode-string"   aria-pressed="false">Corda a corda</button>
+        <button id="btn-mode-chromatic" aria-pressed="false">Cromático</button>
+      </div>
+
+      <!-- Seletor de corda (só visível no modo corda a corda) -->
+      <div id="string-selector" hidden aria-label="Selecione a corda">
+        <p id="string-selector-label">Selecione a corda:</p>
+        <div id="string-buttons" role="group" aria-labelledby="string-selector-label"></div>
+        <button id="btn-play-reference" aria-label="Ouvir nota de referência">
+          🔊 Ouvir referência
+        </button>
+      </div>
+
+      <!-- Lista de cordas do instrumento (modo automático) -->
       <div id="strings-list" role="list" aria-label="Cordas do instrumento"></div>
 
+      <!-- Controles -->
       <button id="btn-start" aria-label="Iniciar afinação">Iniciar afinação</button>
       <button id="btn-stop" hidden aria-label="Parar afinação">Parar</button>
 
-      <!-- Região live: atualizada em tempo real pelo screen reader -->
+      <!-- Status lido pelo leitor de tela -->
       <div
         id="status"
         role="status"
         aria-live="polite"
         aria-atomic="true"
-        aria-label="Status da afinação"
       >
         Pressione "Iniciar afinação" e toque uma corda.
       </div>
 
+      <!-- Indicador visual de cents (decorativo) -->
       <div id="cents-display" aria-hidden="true">
-        <!-- Indicador visual de cents — decorativo, screen reader ignora -->
         <span id="cents-bar-container">
-          <span id="cents-bar"></span>
+          <span id="cents-needle"></span>
         </span>
         <span id="cents-value"></span>
       </div>
+
     </section>
   </main>
 
