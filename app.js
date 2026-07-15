@@ -2,13 +2,13 @@
  * app.js — Controlador principal do Afinador ECJ
  */
 
-import { detectPitch } from './core/pitch.js';
+import { detectPitchYIN, detectPitchTargeted } from './core/pitch.js';
 import { INSTRUMENT as VIOLAO,  matchString as matchViolao,  statusText as statusViolao  } from './instruments/violao.js';
 import { INSTRUMENT as UKULELE, matchString as matchUkulele, statusText as statusUkulele } from './instruments/ukulele.js';
 
-// ─── Modos de afinação ───────────────────────────────────────────────────────
-const MODE_STRING    = 'string';    // usuário trava numa corda específica
-const MODE_CHROMATIC = 'chromatic'; // detecta qualquer nota
+// ─── Modos ───────────────────────────────────────────────────────────────────
+const MODE_STRING    = 'string';
+const MODE_CHROMATIC = 'chromatic';
 
 // ─── Estado ──────────────────────────────────────────────────────────────────
 let currentInstrument = null;
@@ -21,8 +21,11 @@ let animationId       = null;
 let buffer            = null;
 let lastStatus        = '';
 let tunedFrames       = 0;
-const TUNED_CONFIRM   = 10;
-const BUFFER_SIZE     = 4096; // buffer maior → melhor detecção de graves
+
+// Buffer menor = menos latência.
+// 2048 @ 44.1kHz ≈ 46ms — suficiente para detectar até ~85Hz (Mi grave do violão).
+const BUFFER_SIZE   = 2048;
+const TUNED_CONFIRM = 8; // frames consecutivos para confirmar afinação e tocar bip
 
 // ─── Instrumentos registrados ─────────────────────────────────────────────────
 const instruments = {
@@ -47,7 +50,7 @@ const centsValue       = document.getElementById('cents-value');
 document.querySelectorAll('.accordion-toggle').forEach(btn => {
   btn.addEventListener('click', () => {
     const expanded = btn.getAttribute('aria-expanded') === 'true';
-    const panel = document.getElementById(btn.getAttribute('aria-controls'));
+    const panel    = document.getElementById(btn.getAttribute('aria-controls'));
     btn.setAttribute('aria-expanded', String(!expanded));
     panel.hidden = expanded;
   });
@@ -64,19 +67,17 @@ document.querySelectorAll('.instrument-card').forEach(card => {
 
 function selectInstrument(key) {
   currentInstrument = key;
-  selectedString = null;
-
-  const inst = instruments[key];
+  selectedString    = null;
+  const inst        = instruments[key];
   tunerTitle.textContent = inst.data.name;
-  tunerSection.hidden = false;
-
+  tunerSection.hidden    = false;
   renderStringButtons(inst);
   setMode(currentMode);
   setStatus('Pressione "Iniciar afinação" e toque uma corda.', '');
   stopTuning();
 }
 
-// ─── Renderização dos botões de corda ─────────────────────────────────────────
+// ─── Botões de corda ──────────────────────────────────────────────────────────
 function renderStringButtons(inst) {
   stringButtonsEl.innerHTML = '';
   inst.data.strings.forEach((string, i) => {
@@ -98,16 +99,13 @@ document.getElementById('btn-mode-chromatic').addEventListener('click', () => se
 
 function setMode(mode) {
   currentMode = mode;
-
   document.getElementById('btn-mode-string').setAttribute('aria-pressed',    mode === MODE_STRING    ? 'true' : 'false');
   document.getElementById('btn-mode-chromatic').setAttribute('aria-pressed', mode === MODE_CHROMATIC ? 'true' : 'false');
-
-  // No modo cromático não precisa selecionar instrumento/corda
   stringSelectorEl.hidden = mode !== MODE_STRING;
-  stringsList.hidden      = true; // lista informativa removida — foco nos botões de corda
+  stringsList.hidden      = true;
 }
 
-// ─── Referência sonora (modo corda a corda) ───────────────────────────────────
+// ─── Referência sonora ────────────────────────────────────────────────────────
 btnPlayRef.addEventListener('click', () => {
   if (!currentInstrument || selectedString === null) return;
   const string = instruments[currentInstrument].data.strings[selectedString];
@@ -118,12 +116,10 @@ function playReferenceNote(freq) {
   const ctx  = new AudioContext();
   const osc  = ctx.createOscillator();
   const gain = ctx.createGain();
-
   osc.type = 'sine';
   osc.frequency.setValueAtTime(freq, ctx.currentTime);
   gain.gain.setValueAtTime(0.5, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-
   osc.connect(gain);
   gain.connect(ctx.destination);
   osc.start(ctx.currentTime);
@@ -143,11 +139,23 @@ async function startTuning() {
   }
 
   try {
-    mediaStream  = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false, // cancela interferência do processamento de voz
+        noiseSuppression: false, // preserva o timbre real do instrumento
+        autoGainControl:  false, // evita que o ganho automático distorça o pitch
+      },
+      video: false,
+    });
+
     audioContext = new AudioContext();
     analyser     = audioContext.createAnalyser();
-    analyser.fftSize = BUFFER_SIZE;
-    buffer = new Float32Array(analyser.fftSize);
+
+    // smoothingTimeConstant = 0 → sem suavização temporal, dado imediato
+    analyser.fftSize              = BUFFER_SIZE;
+    analyser.smoothingTimeConstant = 0;
+
+    buffer = new Float32Array(BUFFER_SIZE);
 
     const source = audioContext.createMediaStreamSource(mediaStream);
     source.connect(analyser);
@@ -169,13 +177,12 @@ function stopTuning() {
   if (animationId)  cancelAnimationFrame(animationId);
   if (mediaStream)  mediaStream.getTracks().forEach(t => t.stop());
   if (audioContext) audioContext.close();
-  animationId = null;
-  mediaStream = null;
+  animationId  = null;
+  mediaStream  = null;
   audioContext = null;
-  analyser    = null;
-  buffer      = null;
-  tunedFrames = 0;
-
+  analyser     = null;
+  buffer       = null;
+  tunedFrames  = 0;
   btnStart.hidden = false;
   btnStop.hidden  = true;
   centsNeedle.style.left = '50%';
@@ -185,7 +192,17 @@ function stopTuning() {
 // ─── Loop de detecção ─────────────────────────────────────────────────────────
 function loop() {
   analyser.getFloatTimeDomainData(buffer);
-  const freq = detectPitch(buffer, audioContext.sampleRate);
+
+  let freq = null;
+
+  if (currentMode === MODE_STRING) {
+    // Autocorrelação direcionada — O(n), latência mínima
+    const target = instruments[currentInstrument].data.strings[selectedString];
+    freq = detectPitchTargeted(buffer, audioContext.sampleRate, target.freq);
+  } else {
+    // YIN completo — necessário para detecção cromática
+    freq = detectPitchYIN(buffer, audioContext.sampleRate);
+  }
 
   if (freq && freq > 50 && freq < 2000) {
     let text, cents;
@@ -193,27 +210,23 @@ function loop() {
     if (currentMode === MODE_CHROMATIC) {
       const { note, octave, cents: c } = freqToNote(freq);
       cents = c;
-      if (Math.abs(cents) <= 5) {
-        text = `${note}${octave} — afinado.`;
-      } else if (cents > 0) {
-        text = `${note}${octave} — afrouxe a corda.`;
-      } else {
-        text = `${note}${octave} — aperte a corda.`;
-      }
+      text  = Math.abs(cents) <= 5
+        ? `${note}${octave} — afinado.`
+        : cents > 0
+          ? `${note}${octave} — afrouxe a corda.`
+          : `${note}${octave} — aperte a corda.`;
 
     } else {
-      // Modo corda a corda
       const target = instruments[currentInstrument].data.strings[selectedString];
       cents = Math.round(1200 * Math.log2(freq / target.freq));
-      if (Math.abs(cents) <= 5) {
-        text = `${target.label}: afinada.`;
-      } else if (cents > 0) {
-        text = `${target.label}: afrouxe a corda.`;
-      } else {
-        text = `${target.label}: aperte a corda.`;
-      }
+      text  = Math.abs(cents) <= 5
+        ? `${target.label}: afinada.`
+        : cents > 0
+          ? `${target.label}: afrouxe a corda.`
+          : `${target.label}: aperte a corda.`;
     }
 
+    // Só atualiza o aria-live se o texto mudou (evita spam no leitor de tela)
     if (text !== lastStatus) {
       setStatus(text, getCentsClass(cents));
       lastStatus = text;
@@ -239,9 +252,9 @@ function freqToNote(freq) {
   const noteNames = ['Dó','Dó#','Ré','Ré#','Mi','Fá','Fá#','Sol','Sol#','Lá','Lá#','Si'];
   const semitones = 12 * Math.log2(freq / 440);
   const rounded   = Math.round(semitones);
-  const cents      = Math.round((semitones - rounded) * 100);
-  const noteIndex  = ((rounded % 12) + 12 + 9) % 12;
-  const octave     = Math.floor((rounded + 57) / 12);
+  const cents     = Math.round((semitones - rounded) * 100);
+  const noteIndex = ((rounded % 12) + 12 + 9) % 12;
+  const octave    = Math.floor((rounded + 57) / 12);
   return { note: noteNames[noteIndex], octave, cents };
 }
 
@@ -250,12 +263,10 @@ function playConfirmBeep() {
   const ctx  = new AudioContext();
   const osc  = ctx.createOscillator();
   const gain = ctx.createGain();
-
   osc.type = 'sine';
   osc.frequency.setValueAtTime(880, ctx.currentTime);
   gain.gain.setValueAtTime(0.4, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-
   osc.connect(gain);
   gain.connect(ctx.destination);
   osc.start(ctx.currentTime);
@@ -276,8 +287,10 @@ function setStatus(text, cssClass) {
 
 function updateCentsBar(cents) {
   const clamped = Math.max(-50, Math.min(50, cents));
-  const pct = 50 + clamped;
+  const pct     = 50 + clamped;
   centsNeedle.style.left = `${pct}%`;
   centsNeedle.className  = getCentsClass(cents);
-  centsValue.textContent = Math.abs(cents) <= 5 ? 'afinado' : `${cents > 0 ? '+' : ''}${cents} cents`;
+  centsValue.textContent = Math.abs(cents) <= 5
+    ? 'afinado'
+    : `${cents > 0 ? '+' : ''}${cents} cents`;
 }
